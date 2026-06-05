@@ -1,0 +1,26 @@
+name: PR State Changes
+
+on:
+  pull_request:
+    types: [opened, reopened, closed, synchronize]
+
+jobs:
+  update-project:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine PR state
+        id: pr-state
+        run: |
+          if [[ "${{ github.event.action }}" == "closed" ]]; then
+            echo "state=Done" >> $GITHUB_OUTPUT
+          else
+            echo "state=Progress" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log PR event
+        run: |
+          echo "PR: ${{ github.event.pull_request.number }}"
+          echo "Action: ${{ github.event.action }}"
+          echo "Target Column: ${{ steps.pr-state.outputs.state }}"
