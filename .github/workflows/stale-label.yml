@@ -1,0 +1,30 @@
+name: Stale Label Handler
+
+on:
+  issues:
+    types: [labeled, unlabeled]
+  pull_request:
+    types: [labeled, unlabeled]
+
+jobs:
+  handle-stale-label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if Stale label was added
+        id: check-stale
+        run: |
+          LABEL_NAME="${{ github.event.label.name }}"
+          if [[ "$LABEL_NAME" == "Stale" ]]; then
+            ACTION="${{ github.event.action }}"
+            echo "stale_action=$ACTION" >> $GITHUB_OUTPUT
+          else
+            echo "stale_action=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log Stale label event
+        run: |
+          echo "Action: ${{ steps.check-stale.outputs.stale_action }}"
+          echo "Item Type: ${{ github.event.issue != null && 'Issue' || 'PR' }}"
+          echo "Number: ${{ github.event.issue.number || github.event.pull_request.number }}"
