@@ -1,0 +1,32 @@
+name: Backlog Sync
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # Run hourly
+  workflow_dispatch:
+  issues:
+    types: [opened, closed, reopened, labeled, unlabeled]
+  pull_request:
+    types: [opened, closed, reopened]
+
+jobs:
+  sync-backlog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync backlog items
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log('Starting backlog sync...');
+            
+            // Items should be in backlog if:
+            // 1. Is an issue (not a PR)
+            // 2. No PR linked to it
+            // 3. No Stale label
+            // 4. Opened by authenticated user OR assigned to authenticated user
+            
+            // This is a placeholder for full ProjectV2 API implementation
+            console.log('Backlog sync logic would be implemented here');
+            console.log('Checking all issues for backlog eligibility');
