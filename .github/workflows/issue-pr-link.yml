@@ -1,0 +1,34 @@
+name: Issue PR Link Detection
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  detect-linked-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract linked issues from PR
+        id: extract-issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            const issueRegex = /#(\d+)|closes?\s+#(\d+)|resolves?\s+#(\d+)|fix(?:es)?\s+#(\d+)/gi;
+            const matches = [...body.matchAll(issueRegex)];
+            
+            const linkedIssues = new Set();
+            matches.forEach(match => {
+              const issueNum = match[1] || match[2] || match[3] || match[4];
+              if (issueNum) linkedIssues.add(parseInt(issueNum));
+            });
+            
+            console.log(`Found ${linkedIssues.size} linked issues: ${Array.from(linkedIssues).join(', ')}`);
+            core.setOutput('issues', JSON.stringify(Array.from(linkedIssues)));
+
+      - name: Log linked issues
+        run: |
+          echo "Linked Issues: ${{ steps.extract-issues.outputs.issues }}"
+          echo "PR Number: ${{ github.event.pull_request.number }}"
