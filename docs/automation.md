@@ -243,6 +243,36 @@ Create a separate Table view that shows:
 
 For projects with 100+ items, backlog sync may take longer but won't impact GitHub's UI.
 
+## Test Scenarios
+
+Use these scenarios to validate expected behavior after setup:
+
+1. **PR lifecycle**
+   - Open or reopen a PR → item should be added (if needed) and moved to **Progress**
+   - Merge or close the PR → item should move to **Done**
+
+2. **Issue linked from PR body**
+   - Add `Closes #<issue-number>` to PR description
+   - Linked issue should be added (if needed) and moved to **Progress**
+
+3. **Stale label handling**
+   - Add **Stale** label to an issue or PR → item should move to **Waiting**
+   - Remove **Stale** from an issue:
+     - if it has a linked open PR → **Progress**
+     - otherwise → **Todo**
+
+4. **Backlog sync eligibility**
+   - Open issue created by you (or assigned to you), with no stale label and no linked open PR
+   - Hourly sync should add/move it to **Backlog**
+   - Add stale label or link an open PR, then sync/event trigger should move it out of **Backlog** to **Todo**
+
+## Rate Limiting Considerations
+
+- GraphQL calls use pagination (`first: 100`) to keep responses bounded.
+- Helper functions retry ProjectV2 GraphQL calls when rate limits are hit.
+- Backlog sync narrows queries to open issues and deduplicates results to reduce total API usage.
+- For very large portfolios, consider reducing sync frequency or splitting automations by repository scope.
+
 ## Troubleshooting
 
 ### Workflows Not Running

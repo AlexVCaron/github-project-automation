@@ -4,31 +4,87 @@ on:
   pull_request:
     types: [opened, edited, synchronize]
 
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  projects: write
+
 jobs:
   detect-linked-issues:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract linked issues from PR
-        id: extract-issues
+      - name: Move linked issues to progress
         uses: actions/github-script@v7
         with:
           script: |
-            const body = context.payload.pull_request.body || '';
-            const issueRegex = /#(\d+)|closes?\s+#(\d+)|resolves?\s+#(\d+)|fix(?:es)?\s+#(\d+)/gi;
-            const matches = [...body.matchAll(issueRegex)];
-            
-            const linkedIssues = new Set();
-            matches.forEach(match => {
-              const issueNum = match[1] || match[2] || match[3] || match[4];
-              if (issueNum) linkedIssues.add(parseInt(issueNum));
-            });
-            
-            console.log(`Found ${linkedIssues.size} linked issues: ${Array.from(linkedIssues).join(', ')}`);
-            core.setOutput('issues', JSON.stringify(Array.from(linkedIssues)));
+            const path = require('path');
+            const helpers = require(path.join(process.env.GITHUB_WORKSPACE, '.github/scripts/projectv2-helpers.js'));
 
-      - name: Log linked issues
-        run: |
-          echo "Linked Issues: ${{ steps.extract-issues.outputs.issues }}"
-          echo "PR Number: ${{ github.event.pull_request.number }}"
+            try {
+              const config = helpers.loadConfig(process.env.GITHUB_WORKSPACE);
+              if (config.automations.issuePrLinking === false) {
+                core.info('Issue-PR linking automation is disabled in config.');
+                return;
+              }
+
+              const body = context.payload.pull_request.body || '';
+              const linkedIssues = helpers.findLinkedIssues(body);
+
+              if (linkedIssues.length === 0) {
+                core.info('No linked issues found in PR body.');
+                return;
+              }
+
+              core.info(`Found linked issues: ${linkedIssues.join(', ')}`);
+
+              const projectItems = await helpers.queryProject(github, config, core);
+              const projectItemsByContentId = new Map(
+                projectItems.filter((item) => item.contentId).map((item) => [item.contentId, item])
+              );
+
+              for (const issueNumber of linkedIssues) {
+                const issueResponse = await github.graphql(
+                  `
+                    query($owner: String!, $repo: String!, $issueNumber: Int!) {
+                      repository(owner: $owner, name: $repo) {
+                        issue(number: $issueNumber) {
+                          id
+                          state
+                        }
+                      }
+                    }
+                  `,
+                  {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issueNumber
+                  }
+                );
+
+                const issueNode = issueResponse?.repository?.issue;
+                if (!issueNode) {
+                  core.warning(`Issue #${issueNumber} was not found in ${context.repo.owner}/${context.repo.repo}.`);
+                  continue;
+                }
+
+                let projectItem = projectItemsByContentId.get(issueNode.id);
+                if (!projectItem) {
+                  const newItemId = await helpers.addItemToProject(github, config, issueNode.id, core);
+                  projectItem = { itemId: newItemId, statusOptionId: null };
+                  projectItemsByContentId.set(issueNode.id, projectItem);
+                  core.info(`Added linked issue #${issueNumber} to project.`);
+                }
+
+                if (projectItem.statusOptionId !== config.columns.progress) {
+                  await helpers.moveItemInProject(github, config, projectItem.itemId, config.columns.progress, core);
+                  core.info(`Moved issue #${issueNumber} to Progress.`);
+                } else {
+                  core.info(`Issue #${issueNumber} is already in Progress.`);
+                }
+              }
+            } catch (error) {
+              core.setFailed(`Failed to process linked issues: ${error.message}`);
+            }
