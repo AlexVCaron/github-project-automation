@@ -1,1 +1,23 @@
-{\n  \"projectNumber\": null,\n  \"projectId\": null,\n  \"statusFieldId\": null,\n  \"columns\": {\n    \"backlog\": null,\n    \"todo\": null,\n    \"progress\": null,\n    \"review\": null,\n    \"waiting\": null,\n    \"done\": null\n  },\n  \"labels\": {\n    \"stale\": \"Stale\"\n  },\n  \"automations\": {\n    \"prStateChanges\": true,\n    \"issuePrLinking\": true,\n    \"staleLabelHandler\": true,\n    \"backlogSync\": true\n  },\n  \"notes\": \"Update projectNumber and projectId after creating your GitHub Project. Column IDs will be retrieved via GraphQL queries.\"\n}\n
+{
+  "projectNumber": 1,
+  "projectId": "PVT_kwHOAI_7Os4BaL5o",
+  "statusFieldId": "PVTSSF_lAHOAI_7Os4BaL5ozhVFRQw",
+  "columns": {
+    "backlog": "e3b8227e",
+    "todo": "f75ad846",
+    "progress": "47fc9ee4",
+    "review": "dc66f53d",
+    "waiting": "87f98aab",
+    "done": "98236657"
+  },
+  "labels": {
+    "stale": "Stale"
+  },
+  "automations": {
+    "prStateChanges": true,
+    "issuePrLinking": true,
+    "staleLabelHandler": true,
+    "backlogSync": true
+  },
+  "notes": "Update projectNumber and projectId after creating your GitHub Project. Column IDs will be retrieved via GraphQL queries."
+}
