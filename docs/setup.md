@@ -87,7 +87,13 @@ Edit `.github/project-config.json` with your actual IDs:
 
 ## Step 4: Enable Workflows
 
-The workflows in `.github/workflows/` use the default `GITHUB_TOKEN` which has automatic permissions. No additional setup needed!
+The workflows in `.github/workflows/` use `PROJECT_AUTOMATION_TOKEN` when available, and fall back to `GITHUB_TOKEN`.
+
+To allow ProjectV2 updates, add a repository secret named `PROJECT_AUTOMATION_TOKEN`:
+
+1. Create a GitHub App token with project permissions, or create a PAT with project scope
+2. Go to **Repository Settings → Secrets and variables → Actions**
+3. Add `PROJECT_AUTOMATION_TOKEN` with that token value
 
 Workflows will trigger automatically on:
 - PR opens/closes/merges
