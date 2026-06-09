@@ -2,7 +2,12 @@ name: PR State Changes
 
 on:
   pull_request:
-    types: [opened, reopened, closed, synchronize]
+    types: [opened, reopened, closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+  projects: write
 
 jobs:
   update-project:
@@ -10,17 +15,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Determine PR state
-        id: pr-state
-        run: |
-          if [[ "${{ github.event.action }}" == "closed" ]]; then
-            echo "state=Done" >> $GITHUB_OUTPUT
-          else
-            echo "state=Progress" >> $GITHUB_OUTPUT
-          fi
+      - name: Sync PR state to project
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const path = require('path');
+            const helpers = require(path.join(process.env.GITHUB_WORKSPACE, '.github/scripts/projectv2-helpers.js'));
 
-      - name: Log PR event
-        run: |
-          echo "PR: ${{ github.event.pull_request.number }}"
-          echo "Action: ${{ github.event.action }}"
-          echo "Target Column: ${{ steps.pr-state.outputs.state }}"
+            try {
+              const config = helpers.loadConfig(process.env.GITHUB_WORKSPACE);
+              if (config.automations.prStateChanges === false) {
+                core.info('PR state automation is disabled in config.');
+                return;
+              }
+
+              const action = context.payload.action;
+              const targetColumnId = action === 'closed' ? config.columns.done : config.columns.progress;
+              const prNodeId = context.payload.pull_request.node_id;
+
+              const projectItems = await helpers.queryProject(github, config, core);
+              let projectItem = projectItems.find((item) => item.contentId === prNodeId);
+
+              if (!projectItem) {
+                const addedItemId = await helpers.addItemToProject(github, config, prNodeId, core);
+                projectItem = { itemId: addedItemId, statusOptionId: null };
+                core.info(`Added PR #${context.payload.pull_request.number} to project as item ${addedItemId}`);
+              }
+
+              if (projectItem.statusOptionId !== targetColumnId) {
+                await helpers.moveItemInProject(github, config, projectItem.itemId, targetColumnId, core);
+                core.info(`Moved PR #${context.payload.pull_request.number} to ${action === 'closed' ? 'Done' : 'Progress'}.`);
+              } else {
+                core.info('PR already in target column. No move required.');
+              }
+            } catch (error) {
+              core.setFailed(`Failed to sync PR state: ${error.message}`);
+            }
