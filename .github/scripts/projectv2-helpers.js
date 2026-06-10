@@ -308,11 +308,69 @@ async function queryRepositoriesForUser(github, core) {
   };
 }
 
+async function queryOpenLinkedIssueIds(github, owner, repo, core) {
+  const linkedIssueIds = new Set();
+  let hasNextPage = true;
+  let after = null;
+
+  const query = `
+    query($owner: String!, $repo: String!, $after: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequests(first: 100, after: $after, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          nodes {
+            closingIssuesReferences(first: 20) {
+              nodes {
+                id
+              }
+            }
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+        }
+      }
+    }
+  `;
+
+  while (hasNextPage) {
+    const response = await graphqlWithRetries(
+      github,
+      query,
+      {
+        owner,
+        repo,
+        after
+      },
+      core
+    );
+
+    const pullRequestConnection = response?.repository?.pullRequests;
+    if (!pullRequestConnection) {
+      throw new Error(`Malformed GraphQL response while querying pull requests for ${owner}/${repo}`);
+    }
+
+    for (const pullRequest of pullRequestConnection.nodes || []) {
+      for (const issue of pullRequest.closingIssuesReferences?.nodes || []) {
+        if (issue?.id) {
+          linkedIssueIds.add(issue.id);
+        }
+      }
+    }
+
+    hasNextPage = Boolean(pullRequestConnection.pageInfo?.hasNextPage);
+    after = pullRequestConnection.pageInfo?.endCursor || null;
+  }
+
+  return linkedIssueIds;
+}
+
 module.exports = {
   loadConfig,
   queryProject,
   addItemToProject,
   moveItemInProject,
   findLinkedIssues,
-  queryRepositoriesForUser
+  queryRepositoriesForUser,
+  queryOpenLinkedIssueIds
 };

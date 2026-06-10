@@ -60,29 +60,13 @@ jobs:
                 targetColumnId = config.columns.waiting;
               } else if (action === 'unlabeled') {
                 if (isIssueEvent) {
-                  const issueResponse = await github.graphql(
-                    `
-                      query($owner: String!, $repo: String!, $issueNumber: Int!) {
-                        repository(owner: $owner, name: $repo) {
-                          issue(number: $issueNumber) {
-                            linkedPullRequests(first: 20) {
-                              nodes {
-                                state
-                              }
-                            }
-                          }
-                        }
-                      }
-                    `,
-                    {
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      issueNumber: itemPayload.number
-                    }
+                  const openLinkedIssueIds = await helpers.queryOpenLinkedIssueIds(
+                    github,
+                    context.repo.owner,
+                    context.repo.repo,
+                    core
                   );
-
-                  const linkedPullRequests = issueResponse?.repository?.issue?.linkedPullRequests?.nodes || [];
-                  const hasLinkedOpenPullRequest = linkedPullRequests.some((pr) => pr.state === 'OPEN');
+                  const hasLinkedOpenPullRequest = openLinkedIssueIds.has(contentId);
                   targetColumnId = hasLinkedOpenPullRequest ? config.columns.progress : config.columns.todo;
                 } else {
                   targetColumnId = itemPayload.state === 'closed' ? config.columns.done : config.columns.progress;

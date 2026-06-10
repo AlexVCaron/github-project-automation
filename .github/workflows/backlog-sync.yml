@@ -71,11 +71,6 @@ jobs:
                                   name
                                 }
                               }
-                              linkedPullRequests(first: 20) {
-                                nodes {
-                                  state
-                                }
-                              }
                             }
                             pageInfo {
                               hasNextPage
@@ -109,15 +104,19 @@ jobs:
               const eligibleIssuesById = new Map();
 
               for (const repository of repositories) {
+                const openLinkedIssueIds = await helpers.queryOpenLinkedIssueIds(
+                  github,
+                  repository.owner,
+                  repository.name,
+                  core
+                );
                 const createdByViewer = await fetchIssuesByFilter(repository.owner, repository.name, { createdBy: viewerLogin });
                 const assignedToViewer = await fetchIssuesByFilter(repository.owner, repository.name, { assignee: viewerLogin });
 
                 for (const issue of [...createdByViewer, ...assignedToViewer]) {
                   const labels = (issue.labels?.nodes || []).map((label) => label.name.toLowerCase());
                   const hasStaleLabel = labels.includes(staleLabelName);
-                  const hasLinkedOpenPullRequest = (issue.linkedPullRequests?.nodes || []).some(
-                    (pullRequest) => pullRequest.state === 'OPEN'
-                  );
+                  const hasLinkedOpenPullRequest = openLinkedIssueIds.has(issue.id);
 
                   if (!hasStaleLabel && !hasLinkedOpenPullRequest) {
                     eligibleIssuesById.set(issue.id, issue);
