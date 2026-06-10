@@ -7,7 +7,6 @@ on:
 permissions:
   contents: read
   pull-requests: read
-  projects: write
 
 jobs:
   update-project:
@@ -18,6 +17,7 @@ jobs:
       - name: Sync PR state to project
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.PROJECT_AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const path = require('path');
             const helpers = require(path.join(process.env.GITHUB_WORKSPACE, '.github/scripts/projectv2-helpers.js'));
