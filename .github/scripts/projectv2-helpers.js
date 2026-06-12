@@ -365,6 +365,49 @@ async function queryOpenLinkedIssueIds(github, owner, repo, core) {
   return linkedIssueIds;
 }
 
+// Column rank ordering: backlog(0) < todo(1) < progress(2) < waiting(3) < review(4) < done(5)
+const COLUMN_RANK_KEYS = ['backlog', 'todo', 'progress', 'waiting', 'review', 'done'];
+
+function getColumnRank(config, columnId) {
+  if (!columnId) return -1;
+  for (let rank = 0; rank < COLUMN_RANK_KEYS.length; rank++) {
+    const key = COLUMN_RANK_KEYS[rank];
+    if (config.columns[key] && config.columns[key] === columnId) {
+      return rank;
+    }
+  }
+  return -1;
+}
+
+function shouldMovePromoteOnly(config, currentColumnId, targetColumnId) {
+  if (!currentColumnId) return true;
+  const currentRank = getColumnRank(config, currentColumnId);
+  const targetRank = getColumnRank(config, targetColumnId);
+  return targetRank > currentRank;
+}
+
+function loadStatusCache(cacheContent) {
+  const cache = new Map();
+  if (!cacheContent) return cache;
+  try {
+    const data = JSON.parse(cacheContent);
+    for (const [contentId, statusOptionId] of Object.entries(data)) {
+      cache.set(contentId, statusOptionId);
+    }
+  } catch (e) {
+    // Return empty cache on parse error
+  }
+  return cache;
+}
+
+function serializeStatusCache(statusMap) {
+  const obj = {};
+  for (const [contentId, statusOptionId] of statusMap.entries()) {
+    obj[contentId] = statusOptionId;
+  }
+  return JSON.stringify(obj, null, 2);
+}
+
 module.exports = {
   loadConfig,
   queryProject,
@@ -372,5 +415,9 @@ module.exports = {
   moveItemInProject,
   findLinkedIssues,
   queryRepositoriesForUser,
-  queryOpenLinkedIssueIds
+  queryOpenLinkedIssueIds,
+  getColumnRank,
+  shouldMovePromoteOnly,
+  loadStatusCache,
+  serializeStatusCache
 };
