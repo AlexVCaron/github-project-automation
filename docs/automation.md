@@ -14,6 +14,8 @@ This project uses GitHub Actions workflows to automatically manage your personal
 - **PR opened or reopened** → Move to **Progress**
 - **PR closed or merged** → Move to **Done**
 
+These are genuine state changes on the PR itself, so the workflow sets the correct column regardless of the current rank (downward moves are allowed).
+
 **Configuration Required:**
 - `projectId` in `.github/project-config.json`
 - `statusFieldId` in `.github/project-config.json`
@@ -30,9 +32,12 @@ This project uses GitHub Actions workflows to automatically manage your personal
   - `resolves #123`, `resolve #123`
   - `fixes #123`, `fix #123`
   - `fixed #123`
-- For each linked issue (if NOT stale):
-  - Move issue to **Progress**
-  - Remove from **Backlog** if present
+- For each linked issue:
+  - Move issue to **Progress** only if Progress is a higher rank than the issue's current column (promote-only).
+  - If the issue is already at **Waiting**, **Review**, or **Done**, it is left where it is.
+  - Brand-new items (not yet on the board) are added and placed in Progress.
+
+**Column rank ordering:** `backlog (0) < todo (1) < progress (2) < waiting (3) < review (4) < done (5)`
 
 **Configuration Required:**
 - `projectId` in `.github/project-config.json`
@@ -44,8 +49,10 @@ This project uses GitHub Actions workflows to automatically manage your personal
 **Trigger:** When a label is added or removed from an issue or PR
 
 **Logic:**
-- **Stale label added** → Move item to **Waiting** (overrides current column)
+- **Stale label added** → Move item to **Waiting** (overrides current column — this is a genuine state change on the item)
 - **Stale label removed** → Re-evaluate position based on other automations
+
+These are genuine state changes on the item itself, so the workflow sets the correct column regardless of the current rank (downward moves are allowed).
 
 **Configuration Required:**
 - `projectId` in `.github/project-config.json`
@@ -62,19 +69,36 @@ This project uses GitHub Actions workflows to automatically manage your personal
 - When PRs are opened or closed
 
 **Logic:**
-For each issue in your project:
-- **Should be in Backlog if:**
-  - Is an issue (not a PR)
-  - Has NO linked PR
-  - Does NOT have the Stale label
-  - Opened by you OR assigned to you
-  
-- **Action:** Move to Backlog if criteria met, move to Todo if criteria no longer met
+- **Only seeds brand-new items into Backlog.** For each eligible issue (open, authored by or assigned to you, no Stale label, no linked open PR) that is **not yet on the project board**, the workflow adds it and places it in **Backlog**.
+- **Never moves existing items.** If an item is already on the board (in any column), Backlog Sync does **not** change its status. Manual placement and moves made by other workflows are fully respected.
+- **Status cache:** At the end of each run, the workflow uploads a `status-cache.json` artifact recording every project item's current status option ID. On subsequent runs it downloads the most recent artifact (best-effort — the first run tolerates the artifact not existing) to maintain a history of last-known statuses.
+
+**What Backlog Sync no longer does:**
+- It does **not** force eligible issues back to Backlog if they were manually moved elsewhere.
+- It does **not** promote issues from Backlog to Todo when they become ineligible.
 
 **Configuration Required:**
 - `projectId` in `.github/project-config.json`
 - `statusFieldId` in `.github/project-config.json`
-- Column IDs for `backlog` and `todo`
+- Column IDs for `backlog`
+- `actions: write` permission (required for artifact upload)
+
+## Column Rank Ordering
+
+All promote-only automation decisions use the following rank:
+
+| Rank | Column   |
+|------|----------|
+| 0    | Backlog  |
+| 1    | Todo     |
+| 2    | Progress |
+| 3    | Waiting  |
+| 4    | Review   |
+| 5    | Done     |
+
+A workflow using promote-only logic will only move an item to a column with a **higher rank** than its current column. Items with no status (brand-new) are always allowed to be moved to any column.
+
+**Exception:** Workflows triggered by a genuine state change on the issue/PR itself (`pr-state-changes.yml` and `stale-label.yml`) may move an item to any column, including lower-ranked ones, because the move reflects the real state of the item.
 
 ## Automation Flow Diagram
 
@@ -85,9 +109,9 @@ GitHub Event (PR/Issue/Label change)
 │   GitHub Actions Workflows          │
 ├─────────────────────────────────────┤
 │ • pr-state-changes.yml              │
-│ • issue-pr-link.yml                 │
+│ • issue-pr-link.yml (promote-only)  │
 │ • stale-label.yml                   │
-│ • backlog-sync.yml                  │
+│ • backlog-sync.yml (new items only) │
 └─────────────────────────────────────┘
            ↓
     Update Project via
@@ -98,7 +122,7 @@ GitHub Event (PR/Issue/Label change)
 ├─────────────────────────────────────┤
 │ Kanban: Todo, Progress, Review,     │
 │         Waiting, Done               │
-│ Backlog: Unlinked issues            │
+│ Backlog: Unlinked issues (new only) │
 └─────────────────────────────────────┘
 ```
 
@@ -111,12 +135,14 @@ GitHub Event (PR/Issue/Label change)
    ↓
 2. Backlog Sync workflow triggers
    ↓
-3. Detects: No linked PR + No Stale label
+3. Detects: Issue #42 is NOT yet on the board
    ↓
-4. Adds to project and moves to Backlog
+4. Adds to project and places in Backlog
 ```
 
-### Example 2: Link PR to Issue → Issue Moves to Progress
+*Note: If Issue #42 already exists on the board (even in another column), Backlog Sync does nothing — its status is left unchanged.*
+
+### Example 2: Link PR to Issue → Issue Moves to Progress (promote-only)
 
 ```
 1. You create PR #5 with description "Closes #42"
@@ -125,12 +151,12 @@ GitHub Event (PR/Issue/Label change)
    ↓
 3. Parses PR body and finds linked issue #42
    ↓
-4. Checks if issue has Stale label (it doesn't)
+4. Checks rank: Issue #42 is in Backlog (rank 0), Progress is rank 2
    ↓
-5. Moves issue #42 to Progress
-   ↓
-6. Removes issue from Backlog
+5. Progress > Backlog → promotes issue #42 to Progress
 ```
+
+*If Issue #42 were already in Review (rank 4) or Done (rank 5), it would NOT be moved — promote-only logic prevents demoting to Progress (rank 2).*
 
 ### Example 3: Add Stale Label → Item Moves to Waiting
 
@@ -139,9 +165,9 @@ GitHub Event (PR/Issue/Label change)
    ↓
 2. stale-label.yml workflow triggers
    ↓
-3. Detects "Stale" label was added
+3. Detects "Stale" label was added (genuine state change)
    ↓
-4. Moves item to Waiting (regardless of current column)
+4. Moves item to Waiting (any rank allowed — state change exception)
 ```
 
 ### Example 4: Merge PR → PR Moves to Done
@@ -151,9 +177,21 @@ GitHub Event (PR/Issue/Label change)
    ↓
 2. pr-state-changes.yml workflow triggers
    ↓
-3. Detects PR is now closed/merged
+3. Detects PR is now closed/merged (genuine state change)
    ↓
-4. Moves PR to Done column
+4. Moves PR to Done column (any rank allowed — state change exception)
+```
+
+### Example 5: Manual Move Is Respected
+
+```
+1. Issue #42 is in Backlog
+   ↓
+2. You manually drag Issue #42 to Review on the project board
+   ↓
+3. Backlog Sync runs (hourly)
+   ↓
+4. Issue #42 is already on the board → Backlog Sync leaves it in Review
 ```
 
 ## Configuration File
@@ -205,12 +243,14 @@ The `.github/project-config.json` file controls all automation:
 
 ### Recommended Columns
 
-1. **Backlog** - Issues without linked PRs (non-stale)
+1. **Backlog** - New issues without linked PRs (seeded by Backlog Sync; manual moves respected)
 2. **Todo** - Work items not yet started
 3. **Progress** - Open PRs and issues with linked PRs
-4. **Review** - Items awaiting review (manual)
+4. **Review** - Items awaiting review
 5. **Waiting** - Stale items or blocked issues
 6. **Done** - Completed work (closed PRs)
+
+The column rank ordering used by automation is: `Backlog (0) < Todo (1) < Progress (2) < Waiting (3) < Review (4) < Done (5)`.
 
 ### Optional: Backlog Table
 
@@ -231,8 +271,8 @@ Create a separate Table view that shows:
 ### Known Issues
 
 - Issue-PR linking only detects closing keywords in PR description (not comments)
-- Stale label takes priority over other states
-- Manual column moves are respected but won't be overridden by automations
+- Stale label takes priority over other states (this is intentional — it is a genuine state change)
+- Manual column moves are fully respected by all automations. Backlog Sync only seeds brand-new items into Backlog and never moves existing items. `issue-pr-link.yml` only promotes (never demotes) based on the column rank ordering.
 
 ## Performance
 
@@ -253,7 +293,8 @@ Use these scenarios to validate expected behavior after setup:
 
 2. **Issue linked from PR body**
    - Add `Closes #<issue-number>` to PR description
-   - Linked issue should be added (if needed) and moved to **Progress**
+   - Linked issue should be added (if needed) and moved to **Progress** (only if Progress is a higher rank than the issue's current column)
+   - If the issue is already in **Waiting**, **Review**, or **Done**, it should stay where it is
 
 3. **Stale label handling**
    - Add **Stale** label to an issue or PR → item should move to **Waiting**
@@ -261,10 +302,18 @@ Use these scenarios to validate expected behavior after setup:
      - if it has a linked open PR → **Progress**
      - otherwise → **Todo**
 
-4. **Backlog sync eligibility**
-   - Open issue created by you (or assigned to you), with no stale label and no linked open PR
-   - Hourly sync should add/move it to **Backlog**
-   - Add stale label or link an open PR, then sync/event trigger should move it out of **Backlog** to **Todo**
+4. **Backlog sync — new item**
+   - Open issue created by you (or assigned to you), with no stale label and no linked open PR, not yet on the board
+   - Hourly sync should add it to the board and place it in **Backlog**
+
+5. **Backlog sync — existing item (manual move respected)**
+   - Take an issue already on the board and manually move it to any column (e.g., **Review**)
+   - Run Backlog Sync (hourly or via workflow dispatch)
+   - The issue should remain in **Review** — Backlog Sync must not move it back to Backlog or to Todo
+
+6. **Status cache artifact**
+   - After a Backlog Sync run, a `status-cache` artifact should appear in the workflow run's artifacts
+   - On the next run, the artifact should be downloaded and the log should show the number of cached entries loaded
 
 ## Rate Limiting Considerations
 

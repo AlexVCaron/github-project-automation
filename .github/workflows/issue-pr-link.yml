@@ -78,11 +78,11 @@ jobs:
                   core.info(`Added linked issue #${issueNumber} to project.`);
                 }
 
-                if (projectItem.statusOptionId !== config.columns.progress) {
+                if (helpers.shouldMovePromoteOnly(config, projectItem.statusOptionId, config.columns.progress)) {
                   await helpers.moveItemInProject(github, config, projectItem.itemId, config.columns.progress, core);
                   core.info(`Moved issue #${issueNumber} to Progress.`);
                 } else {
-                  core.info(`Issue #${issueNumber} is already in Progress.`);
+                  core.info(`Issue #${issueNumber} is already at or above Progress rank — not moving.`);
                 }
               }
             } catch (error) {

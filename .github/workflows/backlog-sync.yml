@@ -13,6 +13,7 @@ permissions:
   contents: read
   issues: read
   pull-requests: read
+  actions: write
 
 jobs:
   sync-backlog:
@@ -20,12 +21,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Find previous status cache artifact
+        id: find-cache
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
+          result-encoding: string
+          script: |
+            try {
+              const { data } = await github.rest.actions.listArtifactsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'status-cache',
+                per_page: 1
+              });
+              if (data.artifacts.length > 0) {
+                const runId = String(data.artifacts[0].workflow_run.id);
+                core.info(`Found status-cache artifact from run ${runId}`);
+                return runId;
+              }
+            } catch (e) {
+              core.warning(`Could not list artifacts: ${e.message}`);
+            }
+            return '';
+
+      - name: Download previous status cache
+        if: steps.find-cache.outputs.result != ''
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.PROJECT_AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
+          name: status-cache
+          run-id: ${{ steps.find-cache.outputs.result }}
+          path: /tmp/status-cache
+        continue-on-error: true
+
       - name: Sync backlog items
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.PROJECT_AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const path = require('path');
+            const fs = require('fs');
             const helpers = require(path.join(process.env.GITHUB_WORKSPACE, '.github/scripts/projectv2-helpers.js'));
 
             try {
@@ -33,6 +69,16 @@ jobs:
               if (config.automations.backlogSync === false) {
                 core.info('Backlog sync automation is disabled in config.');
                 return;
+              }
+
+              // Load previous status cache (best-effort; tolerate missing on first run)
+              let previousCache = new Map();
+              try {
+                const cacheContent = fs.readFileSync('/tmp/status-cache/status-cache.json', 'utf8');
+                previousCache = helpers.loadStatusCache(cacheContent);
+                core.info(`Loaded ${previousCache.size} entries from previous status cache.`);
+              } catch (e) {
+                core.info('No previous status cache found (first run or download failed).');
               }
 
               const staleLabelName = (config.labels.stale || 'Stale').toLowerCase();
@@ -126,34 +172,45 @@ jobs:
 
               core.info(`Found ${eligibleIssuesById.size} eligible issues for Backlog.`);
 
+              // Build current status map for the cache (before any mutations)
+              const currentStatusMap = new Map();
+              for (const item of projectItems) {
+                if (item.contentId && item.statusOptionId !== null) {
+                  currentStatusMap.set(item.contentId, item.statusOptionId);
+                }
+              }
+
+              // Only seed brand-new items (not yet on the board) into Backlog.
+              // Items already on the board are left exactly where they are.
               for (const issue of eligibleIssuesById.values()) {
-                let projectItem = projectItemsByContentId.get(issue.id);
+                const projectItem = projectItemsByContentId.get(issue.id);
                 if (!projectItem) {
                   const newItemId = await helpers.addItemToProject(github, config, issue.id, core);
-                  projectItem = { itemId: newItemId, statusOptionId: null, contentType: 'Issue' };
-                  projectItemsByContentId.set(issue.id, projectItem);
-                  core.info(`Added issue #${issue.number} to project.`);
-                }
-
-                if (projectItem.statusOptionId !== config.columns.backlog) {
-                  await helpers.moveItemInProject(github, config, projectItem.itemId, config.columns.backlog, core);
-                  core.info(`Moved issue #${issue.number} to Backlog.`);
+                  await helpers.moveItemInProject(github, config, newItemId, config.columns.backlog, core);
+                  currentStatusMap.set(issue.id, config.columns.backlog);
+                  core.info(`Added issue #${issue.number} to project and placed in Backlog.`);
+                } else {
+                  core.info(`Issue #${issue.number} already on board (${projectItem.statusName || 'no status'}) — not moving.`);
                 }
               }
 
-              for (const projectItem of projectItems) {
-                if (projectItem.contentType !== 'Issue') {
-                  continue;
-                }
-
-                const isEligible = eligibleIssuesById.has(projectItem.contentId);
-                const inBacklog = projectItem.statusOptionId === config.columns.backlog;
-
-                if (!isEligible && inBacklog) {
-                  await helpers.moveItemInProject(github, config, projectItem.itemId, config.columns.todo, core);
-                  core.info(`Moved issue item ${projectItem.itemId} from Backlog to Todo.`);
-                }
-              }
+              // Write updated status cache for subsequent runs
+              const cacheDir = '/tmp/status-cache-new';
+              fs.mkdirSync(cacheDir, { recursive: true });
+              fs.writeFileSync(
+                path.join(cacheDir, 'status-cache.json'),
+                helpers.serializeStatusCache(currentStatusMap)
+              );
+              core.info(`Status cache written with ${currentStatusMap.size} entries.`);
             } catch (error) {
               core.setFailed(`Backlog sync failed: ${error.message}`);
             }
+
+      - name: Upload status cache
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: status-cache
+          path: /tmp/status-cache-new/status-cache.json
+          if-no-files-found: ignore
+          overwrite: true
